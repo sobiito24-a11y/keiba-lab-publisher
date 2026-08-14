@@ -35,6 +35,8 @@ DEFAULT_PINNED_POST = """🐴 KEIBA LAB｜AI競馬予想
 
 全レースの詳しい予想と考察はnoteへ🐾"""
 
+_CIRCLED = {1: "①", 2: "②", 3: "③", 4: "④", 5: "⑤", 6: "⑥", 7: "⑦", 8: "⑧", 9: "⑨", 10: "⑩", 11: "⑪", 12: "⑫", 13: "⑬", 14: "⑭", 15: "⑮", 16: "⑯", 17: "⑰", 18: "⑱"}
+
 
 def text(value: Any) -> str:
     return "" if value is None else str(value).strip()
@@ -189,7 +191,7 @@ def short_commentary(race: Mapping[str, Any]) -> str:
     if ability and text(ability.get("horse_no")) != text(honmei.get("horse_no")):
         first = f"能力比較では{_horse_label(ability)}が上位も、今回条件を含め{_horse_label(honmei)}を中心視。"
     else:
-        facts = _condition_phrases(honmei, limit=1)
+        facts = [item for item in _condition_phrases(honmei, limit=4) if not re.search(r"劣勢|下降|懸念|不利|届かない", item)]
         variants = (
             f"能力と今回条件を総合し{_horse_label(honmei)}を中心視。",
             f"能力上位の{_horse_label(honmei)}を軸に、{facts[0] if facts else '相手関係'}も評価。",
@@ -216,14 +218,14 @@ def note_race_section(race: Mapping[str, Any], owner_comment: str = "") -> str:
         reasons = _condition_phrases(honmei, limit=4)
         jockey = jockey_display(honmei)
         if jockey.relationship == "changed": reasons.append(f"騎手は{jockey.text}へ変更")
-        lines.extend(["", "### 🐴 本命 ◎", "", f"◎{_horse_label(honmei)}", "", " / ".join(facts), "", ("、".join(reasons) + "を総合し、最終的に本命とした。") if reasons else "保存時点の総合評価を根拠に本命とした。"])
+        lines.extend(["", "### 🎯 注目馬", "", f"◎{_horse_label(honmei)}", "", " / ".join(facts), "", ("、".join(reasons) + "を総合し、最終的に本命とした。") if reasons else "保存時点の総合評価を根拠に本命とした。"])
     values = value_horses(race)
     if values:
         descriptions = []
         for horse in values:
             reasons = _condition_phrases(horse, limit=2)
             descriptions.append(f"{text(horse.get('mark'))}{_horse_label(horse)}は、{('、'.join(reasons) + 'が市場評価との比較材料。') if reasons else '保存時点で市場評価とのずれがある候補。'}買い推奨ではなく、相手候補として注目したい。")
-        lines.extend(["", "### 💡 AI注目の妙味馬", "", *descriptions])
+        lines.extend(["", "### 💰 妙味あり", "", *descriptions])
     if text(owner_comment):
         lines.extend(["", "### 【主のひとこと】", "", text(owner_comment)])
     result = "\n".join(lines).rstrip()
@@ -232,7 +234,7 @@ def note_race_section(race: Mapping[str, Any], owner_comment: str = "") -> str:
 
 
 def note_article(venue: str, races: Iterable[Mapping[str, Any]], race_date: str, *, intro: str = DEFAULT_NOTE_INTRO, owner_comments: Mapping[str, str] | None = None) -> str:
-    lines = [text(intro), "", f"## 🏇 {_month_day(race_date)} {venue}競馬｜全レースAI予想"]
+    lines = [text(intro), "", f"## 🐎 {_month_day(race_date)} {venue}競馬｜全レースAI予想"]
     for race in races:
         lines.extend(["", note_race_section(race, (owner_comments or {}).get(text(race.get("race_id")), ""))])
     return "\n".join(lines).rstrip() + "\n"
@@ -255,13 +257,22 @@ def x_weighted_length(body: str) -> int:
 def x_post(race: Mapping[str, Any], note_url: str = "") -> str:
     venue, rno = text(race.get("venue")), race_number(race)
     marked = marked_horses(race)
-    lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *([f"{text(h.get('mark'))}{text(h.get('horse_no'))} {text(h.get('horse_name'))}" for h in marked] or ["保存データ内に印情報なし"]), "", short_commentary(race)]
+    mark_lines = []
+    for horse in marked:
+        number = _number_value(horse.get("horse_no"))
+        mark_lines.append(f"{text(horse.get('mark'))}{_CIRCLED.get(number, text(horse.get('horse_no')))} {text(horse.get('horse_name'))}")
+    lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *(mark_lines or ["保存データ内に印情報なし"]), "", short_commentary(race)]
     if note_url:
-        lines.extend(["", "全レースの詳しいAI考察はnoteにて👇", note_url])
-    lines.extend(["", f"#{venue}{rno} #{venue}競馬 #AI競馬予想"])
+        lines.extend(["", "🐴全レース予想・詳しいAI考察はnote👇", note_url])
+    lines.extend(["", f"#{venue}{rno} #AI競馬予想"])
     body = _safe_sentence("\n".join(lines)).strip()
     if x_weighted_length(body) > 280:
-        lines = lines[:len(marked) + 2] + ["", short_commentary(race).split("。")[0] + "。"] + (["", "詳しいAI考察はnoteにて👇", note_url] if note_url else []) + ["", f"#{venue}{rno} #AI競馬予想"]
+        lines = lines[:len(marked) + 2] + ["", short_commentary(race).split("。")[0] + "。"] + (["", "🐴全レース予想はnote👇", note_url] if note_url else []) + ["", f"#{venue}{rno}"]
+        body = _safe_sentence("\n".join(lines)).strip()
+    if x_weighted_length(body) > 280:
+        lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *(mark_lines or ["保存データ内に印情報なし"])]
+        if note_url:
+            lines.extend(["", "🐴詳しいAI考察はnote👇", note_url])
         body = _safe_sentence("\n".join(lines)).strip()
     validate_public_content(race, body, require_top3=False)
     if x_weighted_length(body) > 280:

@@ -1,6 +1,8 @@
-# KEIBA LAB Publisher Ver.2
+# KEIBA LAB Publisher Ver.3
 
-Keiba AI Mobile / Dashboardが保存した `.keiba` Prediction Snapshotを読み取り、会場別note完成原稿とレース別X投稿を作る配信専用アプリです。予想処理は呼ばず、Snapshotの能力・順位・能力帯・印・妙味・各評価を変更しません。
+保存済み `.keiba` Prediction Snapshotを、全レースnote原稿・手動X投稿文・公開記録・結果リプへ変換する公開運用アシスタントです。
+
+Publisherは予想しません。能力値、能力順位、今回評価、能力帯、◎○▲△☆、妙味、騎手、保存済み考察材料を再計算・補正・変更しません。Dashboard側の予想ロジックも変更しません。
 
 ## 起動
 
@@ -9,47 +11,54 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## 最短の当日運用
+X API、API Key、Access Token、OAuth設定は不要です。Xへの投稿は完成文をコピーして手動で行います。
 
-1. `.keiba` を開き、会場を選ぶ。
-2. 固定冒頭文・任意の「主のひとこと」を確認し、note原稿をコピーまたはMarkdown保存する。
-3. noteで公開し、会場固定URLをPublisherへ登録する。
-4. X接続確認、全投稿プレビュー、dry-run、1投稿テストの順に確認する。
-5. 選択レースを投稿開始する。1件目の後は5/10/15分の間隔で予約される。
+## 運用手順
 
-noteについて、一般公開された公式の投稿APIを確認できなかったため、非公式APIやブラウザ自動操作は実装していません。全文コピー、Markdown、プレーンテキストを使用してください。
+1. `.keiba` を読み込む。
+2. 今日の運用モードを選ぶ。
+   - 🏢 通常平日：全レースnote＋全レースX原稿
+   - 🏃 忙しい日：全レースnote＋手動選択した無料1R
+   - 🌴 休日：全レースnote＋手動選択した無料1R
+3. 固定冒頭文と任意の「主のひとこと」を確認し、note原稿をコピーまたはMarkdown保存する。
+4. note公開後、当日の会場note URLを入力する。
+5. URL込み280文字以内のX原稿をコピーし、手動投稿後に「X投稿済みにする」を押す。
+6. 正式結果JSONがある場合だけ読み込み、結果リプ案と「主の結果ひとこと」を作る。
+7. Publisher stateを保存する。
 
-## X公式API
+## 公開候補
 
-実装はX API v2のユーザーコンテキストを使用します。
+候補表示は、Snapshotに既にある◎の能力/今回順位、考察材料数、妙味、能力1位と◎の関係だけを使います。これは予想評価ではなく、公開コンテンツとして説明しやすいレースの提案です。最終選択は常にユーザーが行います。
 
-- 接続確認: `GET https://api.x.com/2/users/me`
-- Create Post: `POST https://api.x.com/2/tweets`
-- 認証: OAuth 1.0a User Context（Consumer Key/Secret + User Access Token/Secret）
+## 正式結果JSON
 
-X Developer ConsoleでProject/Appを作成し、User authentication settingsでRead and write権限を有効にしてください。権限変更後はアクセストークンを再生成します。Xの料金・利用上限は契約とDeveloper Console表示に従います（料金体系は変更され得るため、運用開始日に必ず確認してください）。
+`.keiba` 内の `mobile_snapshot.result_file` に正式結果があれば利用します。空の場合は「結果データ未取得」です。別JSONも読み込めます。
 
-環境変数または `.streamlit/secrets.toml` に次を設定します。値は画面・ソース・Gitに保存しません。
-
-```toml
-X_API_KEY = "..."
-X_API_SECRET = "..."
-X_ACCESS_TOKEN = "..."
-X_ACCESS_TOKEN_SECRET = "..."
+```json
+{
+  "race_id": "202644081402",
+  "results": [
+    {"horse_no": "16", "rank": "1", "horse_name": "ガーリッシュ"}
+  ],
+  "payoffs": {
+    "wide": [{"combination": "3-16", "payout": 410}]
+  }
+}
 ```
 
-想定ユーザー名（初期値 `keiba_lab_ai`）と `/2/users/me` のusernameが一致しなければ投稿を拒否します。投稿前に会場note URLが必要です。成功時はpost ID、時刻、race_id、本文SHA-256、アカウント、note URLを保存し、`race_id × account × post_type` で二重投稿を防ぎます。失敗時は本文hash、HTTP status、エラー、retry可否を記録し、他レースの状態を維持します。
+着順・配当はJSONに明記された値だけを表示します。組合せ、配当、的中を推測しません。
 
-## Publisher state
+## state v3
 
-schema v2は生成/手動修正版のnote・X本文、固定冒頭文、主のひとこと、会場note URL、公開モード、無料race_id、予約時刻、投稿状態、投稿履歴、X post IDを保存します。元Snapshot本体は格納・変更せず、SHA-256で同じ予想ファイルか照合します。schema v1は読込時にv2へ移行します。
+次を保存します。
 
-## 公開モード
+- 運用モード、無料公開race_id
+- 生成note、手動修正版note、固定冒頭文、主のひとこと
+- 生成X、手動修正版X、会場note URL
+- 手動公開記録、本文SHA-256、無料公開区分
+- 正式結果データ、結果リプ、主の結果ひとこと
 
-- 全レース無料
-- 1R無料＋全レースnote（無料race_idを指定）
-
-これは公開区分だけで、予想内容は変更しません。有料決済APIは未実装です。
+Ver.1/2 stateは読込時にv3へ移行します。旧X API履歴は `legacy_x_api_history` に隔離し、新しい手動公開記録と混在させません。
 
 ## テスト
 
@@ -57,4 +66,4 @@ schema v2は生成/手動修正版のnote・X本文、固定冒頭文、主の�
 python -m pytest -q
 ```
 
-認証情報なしで全テストを実行できます。HTTPはモックし、本番投稿は行いません。
+本番API・ブラウザ操作なしで実行できます。

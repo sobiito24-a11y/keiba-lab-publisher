@@ -6,13 +6,13 @@ import pytest
 
 from publisher.snapshot import prediction_signature
 from publisher.state import (
-    DuplicatePostError,
+    DuplicatePublicationError,
     PublisherStateError,
     dump_state,
-    ensure_can_post,
+    ensure_can_record_publication,
     load_state,
     new_state,
-    record_post,
+    record_manual_publication,
 )
 
 
@@ -23,12 +23,14 @@ def test_publisher_save_roundtrip_and_manual_edits(loaded):
     race_id = loaded.source_info["race_ids"][0]
     state["x_drafts"][race_id] = "手動編集したX原稿"
     state["x_targets"][race_id] = False
-    state["schedules"][race_id] = "09:30"
+    state["operation_mode"] = "🏃 忙しい日"
+    state["free_race_ids"] = [race_id]
     restored = load_state(dump_state(state), source_info=loaded.source_info)
     assert restored["note_drafts"] == state["note_drafts"]
     assert restored["x_drafts"] == state["x_drafts"]
     assert restored["x_targets"] == state["x_targets"]
-    assert restored["schedules"] == state["schedules"]
+    assert restored["operation_mode"] == state["operation_mode"]
+    assert restored["free_race_ids"] == state["free_race_ids"]
 
 
 def test_publisher_state_does_not_embed_or_change_prediction(loaded):
@@ -44,21 +46,10 @@ def test_publisher_state_does_not_embed_or_change_prediction(loaded):
 def test_double_post_prevention(loaded):
     state = new_state(loaded.source_info)
     race_id = loaded.source_info["race_ids"][0]
-    record_post(state, race_id, "@keibalab", "x", "投稿済")
-    with pytest.raises(DuplicatePostError):
-        ensure_can_post(state, race_id, "@keibalab", "x")
-    with pytest.raises(DuplicatePostError):
-        record_post(state, race_id, "@keibalab", "x", "投稿済")
-    # Different account or post type remains a separate key.
-    ensure_can_post(state, race_id, "@another", "x")
-    ensure_can_post(state, race_id, "@keibalab", "note")
-
-
-def test_failed_post_can_be_retried(loaded):
-    state = new_state(loaded.source_info)
-    race_id = loaded.source_info["race_ids"][0]
-    record_post(state, race_id, "@keibalab", "x", "投稿失敗", message="network")
-    ensure_can_post(state, race_id, "@keibalab", "x")
+    race = {"race_id": race_id, "date": "2026-08-09", "venue": "中京", "race_number": "1R"}
+    record_manual_publication(state, race, "本文", "https://note.com/x", free_publication=True)
+    with pytest.raises(DuplicatePublicationError): ensure_can_record_publication(state, race_id)
+    with pytest.raises(DuplicatePublicationError): record_manual_publication(state, race, "本文", "https://note.com/x", free_publication=True)
 
 
 def test_state_rejects_wrong_source(loaded):
@@ -80,4 +71,3 @@ def test_state_duplicate_race_id_rejected(loaded):
     state["source"]["race_ids"].append(state["source"]["race_ids"][0])
     with pytest.raises(PublisherStateError, match="重複"):
         dump_state(state)
-
