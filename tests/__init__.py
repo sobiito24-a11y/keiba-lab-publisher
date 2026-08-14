@@ -1,0 +1,2 @@
+"""Publisher regression tests."""
+
