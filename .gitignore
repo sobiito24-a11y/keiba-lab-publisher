@@ -1,20 +1,7 @@
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-venv/
-
-# Secrets
 .env
-.env.*
 .streamlit/secrets.toml
-*credentials*
-*token*
-
-# Prediction / local data
-*.keiba
-
-# OS
-.DS_Store
-Thumbs.db
+secrets.toml
+*.token
+publisher_state/
+__pycache__/
+.pytest_cache/

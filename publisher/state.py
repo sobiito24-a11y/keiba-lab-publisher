@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from datetime import datetime
 from typing import Any, Mapping
 
 
 PUBLISHER_FORMAT = "keiba-lab-publisher-state"
-PUBLISHER_SCHEMA_VERSION = 1
+PUBLISHER_SCHEMA_VERSION = 2
 STATUSES = ("未生成", "原稿生成済", "note URL登録済", "X投稿準備完了", "投稿済", "投稿失敗")
 
 
@@ -28,13 +29,21 @@ def new_state(source_info: Mapping[str, Any]) -> dict[str, Any]:
         "source": copy.deepcopy(dict(source_info)),
         "exclude_debut": True,
         "note_urls": {},
+        "note_intro": "",
         "note_drafts": {},
+        "note_generated": {},
+        "owner_comments": {},
         "x_drafts": {},
+        "x_generated": {},
         "x_targets": {},
         "race_status": {},
         "schedules": {},
         "post_history": [],
         "x_account": "",
+        "expected_x_account": "keiba_lab_ai",
+        "publication_mode": "全レース無料",
+        "free_race_ids": [],
+        "posting_interval_minutes": 10,
         "publication_sections": {
             "free": ["marks", "short_commentary"],
             "paid_reserved": ["detail_analysis", "ability_value", "course_development", "training", "stable_comment"],
@@ -56,10 +65,21 @@ def load_state(data: bytes, *, source_info: Mapping[str, Any] | None = None) -> 
         state = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PublisherStateError("Publisher保存ファイルが破損しています。") from exc
+    if state.get("schema_version") == 1:
+        state = _migrate_v1(state)
     validate_state(state)
     if source_info and state.get("source", {}).get("immutable_prediction_sha256") != source_info.get("immutable_prediction_sha256"):
         raise PublisherStateError("異なるPrediction Snapshot用のPublisher保存データです。")
     return copy.deepcopy(state)
+
+
+def _migrate_v1(state: Mapping[str, Any]) -> dict[str, Any]:
+    migrated = copy.deepcopy(dict(state))
+    migrated["schema_version"] = 2
+    defaults = new_state(migrated.get("source") or {})
+    for key, value in defaults.items():
+        migrated.setdefault(key, value)
+    return migrated
 
 
 def validate_state(state: Mapping[str, Any]) -> None:
@@ -88,7 +108,7 @@ def ensure_can_post(state: Mapping[str, Any], race_id: str, account: str, post_t
             raise DuplicatePostError(f"{race_id} は同じアカウント・投稿種別ですでに投稿済みです。")
 
 
-def record_post(state: dict[str, Any], race_id: str, account: str, post_type: str, status: str, *, message: str = "") -> None:
+def record_post(state: dict[str, Any], race_id: str, account: str, post_type: str, status: str, *, body: str = "", post_id: str = "", note_url: str = "", message: str = "", http_status: int | None = None, retryable: bool | None = None) -> None:
     if status not in {"投稿済", "投稿失敗"}:
         raise PublisherStateError("投稿履歴のstatusが不正です。")
     if status == "投稿済":
@@ -101,6 +121,11 @@ def record_post(state: dict[str, Any], race_id: str, account: str, post_type: st
             "status": status,
             "posted_at": datetime.now().isoformat(timespec="seconds"),
             "message": message,
+            "post_id": str(post_id),
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest() if body else "",
+            "note_url": str(note_url),
+            "http_status": http_status,
+            "retryable": retryable,
         }
     )
     state.setdefault("race_status", {})[str(race_id)] = status

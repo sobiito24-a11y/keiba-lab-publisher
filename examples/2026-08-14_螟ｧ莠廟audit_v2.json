@@ -1,0 +1,14 @@
+{
+  "source_sha256": "f796f0835515dd4fd0a1797fa16d04b8d21eb78204ad3fc362b8a2ec04e5cb60",
+  "race_count": 10,
+  "note_mark_mismatch": 0,
+  "current_rank_mismatch": 0,
+  "jockey_misstatement": 0,
+  "internal_labels": [],
+  "max_commentary_similarity": 0.807,
+  "x_max_weighted_length": 210,
+  "note_url_all_posts": true,
+  "duplicate_blocked_all": true,
+  "prediction_signature_unchanged": true,
+  "errors": []
+}

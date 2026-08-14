@@ -1,15 +1,6 @@
-# KEIBA LAB Publisher
+# KEIBA LAB Publisher Ver.2
 
-Keiba AI Dashboard が保存した `.keiba` Prediction Snapshotを読み取り、会場別note原稿・レース別X投稿文・投稿作業状態へ変換する配信用アプリです。
-
-## 重要な境界
-
-- Publisherは予想しません。`predict_jra` / `predict_nar` その他の評価計算を呼びません。
-- `.keiba` はDashboardの正本 `core/prediction_snapshot.py` の完全コピーで検証します。
-- Snapshotは読み取り専用です。能力値、能力順位、能力帯、今回評価順位、印、妙味ありを変更しません。
-- note/Xの文面は保存済みのSnapshot事実だけから生成します。結果や未来オッズは読み込みません。
-- 騎手名正規化は文面表示だけに適用し、Snapshotの騎手評価や文字列を書き換えません。
-- Publisher Ver.1は自動投稿しません。Xは将来の公式API接続境界だけを用意しています。noteの非公式API・ブラウザ自動操作も行いません。
+Keiba AI Mobile / Dashboardが保存した `.keiba` Prediction Snapshotを読み取り、会場別note完成原稿とレース別X投稿を作る配信専用アプリです。予想処理は呼ばず、Snapshotの能力・順位・能力帯・印・妙味・各評価を変更しません。
 
 ## 起動
 
@@ -18,21 +9,47 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-1. Dashboardで保存した `.keiba` をアップロードします。
-2. 会場・レースを選択して保存予想を確認します。
-3. `note原稿` / `X投稿` タブで原稿をプレビュー・編集します。
-4. 会場別note URL、X対象、予約時刻を設定します。
-5. `Publisher作業状態を保存` からJSONを保存します。
+## 最短の当日運用
 
-新馬戦除外は初期ONです。レース名または保存済みクラス情報に `新馬` / `メイクデビュー` が明記されたレースだけを除外します。
+1. `.keiba` を開き、会場を選ぶ。
+2. 固定冒頭文・任意の「主のひとこと」を確認し、note原稿をコピーまたはMarkdown保存する。
+3. noteで公開し、会場固定URLをPublisherへ登録する。
+4. X接続確認、全投稿プレビュー、dry-run、1投稿テストの順に確認する。
+5. 選択レースを投稿開始する。1件目の後は5/10/15分の間隔で予約される。
 
-## Publisher保存JSON
+noteについて、一般公開された公式の投稿APIを確認できなかったため、非公式APIやブラウザ自動操作は実装していません。全文コピー、Markdown、プレーンテキストを使用してください。
 
-Prediction Snapshot本体は格納・変更せず、元 `.keiba` のSHA-256、Snapshot SHA-256、予想事実SHA-256、race_id一覧、原稿、手動編集、note URL、投稿対象、状態、予約、投稿履歴を保存します。読み込み時に元Snapshotの識別情報と照合します。
+## X公式API
 
-投稿状態は `未生成`、`原稿生成済`、`note URL登録済`、`X投稿準備完了`、`投稿済`、`投稿失敗` です。同一 `race_id × Xアカウント × 投稿種別` の投稿済み履歴がある場合は再投稿を拒否します。
+実装はX API v2のユーザーコンテキストを使用します。
 
-将来の無料/有料区分に備え、状態schemaには公開用の印・短評と、詳細分析用の予約セクションを分離して保持します。Ver.1では全原稿を無料公開用として生成し、販売処理は行いません。
+- 接続確認: `GET https://api.x.com/2/users/me`
+- Create Post: `POST https://api.x.com/2/tweets`
+- 認証: OAuth 1.0a User Context（Consumer Key/Secret + User Access Token/Secret）
+
+X Developer ConsoleでProject/Appを作成し、User authentication settingsでRead and write権限を有効にしてください。権限変更後はアクセストークンを再生成します。Xの料金・利用上限は契約とDeveloper Console表示に従います（料金体系は変更され得るため、運用開始日に必ず確認してください）。
+
+環境変数または `.streamlit/secrets.toml` に次を設定します。値は画面・ソース・Gitに保存しません。
+
+```toml
+X_API_KEY = "..."
+X_API_SECRET = "..."
+X_ACCESS_TOKEN = "..."
+X_ACCESS_TOKEN_SECRET = "..."
+```
+
+想定ユーザー名（初期値 `keiba_lab_ai`）と `/2/users/me` のusernameが一致しなければ投稿を拒否します。投稿前に会場note URLが必要です。成功時はpost ID、時刻、race_id、本文SHA-256、アカウント、note URLを保存し、`race_id × account × post_type` で二重投稿を防ぎます。失敗時は本文hash、HTTP status、エラー、retry可否を記録し、他レースの状態を維持します。
+
+## Publisher state
+
+schema v2は生成/手動修正版のnote・X本文、固定冒頭文、主のひとこと、会場note URL、公開モード、無料race_id、予約時刻、投稿状態、投稿履歴、X post IDを保存します。元Snapshot本体は格納・変更せず、SHA-256で同じ予想ファイルか照合します。schema v1は読込時にv2へ移行します。
+
+## 公開モード
+
+- 全レース無料
+- 1R無料＋全レースnote（無料race_idを指定）
+
+これは公開区分だけで、予想内容は変更しません。有料決済APIは未実装です。
 
 ## テスト
 
@@ -40,4 +57,4 @@ Prediction Snapshot本体は格納・変更せず、元 `.keiba` のSHA-256、Sn
 python -m pytest -q
 ```
 
-同梱実データfixtureは2026-08-09 JRAの札幌・新潟・中京、計32レースです。NARは同一schemaのテストfixtureでも検証します。
+認証情報なしで全テストを実行できます。HTTPはモックし、本番投稿は行いません。

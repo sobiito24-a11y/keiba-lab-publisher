@@ -37,9 +37,9 @@ def test_debut_exclusion_is_explicit_only(snapshot):
 def test_venue_note_contains_all_races_and_brand(snapshot):
     races = group_by_venue(snapshot)["新潟"]
     note = note_article("新潟", races, "2026-08-09")
-    assert "【8/9 新潟｜KEIBA LAB AI全レース予想】" in note
-    assert "自作競馬AI KEIBA LABによる公開検証予想です。" in note
-    assert "予想はレース前に保存し、結果に関係なく検証しています。" in note
+    assert "## 🏇 8/9 新潟競馬｜全レースAI予想" in note
+    assert "🐴 KEIBA LABへようこそ。" in note
+    assert "予想はレース前の時点で保存。" in note
     assert note.count("### 新潟") == len(races)
 
 
@@ -50,7 +50,7 @@ def test_each_x_post_is_race_specific_and_has_venue_url(snapshot):
     for race, post in zip(races, posts):
         assert f"【新潟{race['race_number']}｜KEIBA LAB AI予想】" in post
         assert "https://note.com/niigata" in post
-        assert f"#新潟{race['race_number']} #競馬予想 #AI競馬予想" in post
+        assert f"#新潟{race['race_number']} #新潟競馬 #AI競馬予想" in post
 
 
 def test_note_url_is_venue_specific(snapshot):
@@ -66,10 +66,10 @@ def test_value_present_and_absent(snapshot):
     for horse in race["horses"]:
         horse["value_signal"] = False
     assert value_horses(race) == []
-    assert "【妙味あり】" not in note_race_section(race)
+    assert "AI注目の妙味馬" not in note_race_section(race)
     race["horses"][0]["value_signal"] = True
     assert value_horses(race) == [race["horses"][0]]
-    assert "【妙味あり】" in note_race_section(race)
+    assert "AI注目の妙味馬" in note_race_section(race)
 
 
 def test_missing_marks_and_optional_materials_are_safe(snapshot):
@@ -102,4 +102,3 @@ def test_content_does_not_mutate_snapshot(snapshot):
     note_race_section(race)
     x_post(race)
     assert prediction_signature(snapshot) == before
-

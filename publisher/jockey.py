@@ -4,13 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from shared_dashboard_core.core.market_compare import (
-    _clean_jockey_display_name,
-    _preferred_jockey_display_name,
-    _same_jockey_display_name,
-)
-
-
 SAFE_ABBREVIATIONS = {
     "松山弘平": {"松山"},
     "川田将雅": {"川田"},
@@ -24,7 +17,7 @@ class JockeyDisplay:
 
 
 def _clean(value: Any) -> str:
-    text = _clean_jockey_display_name(str(value or ""))
+    text = re.sub(r"\s+", "", str(value or "")).replace("騎手", "")
     return re.sub(r"[（(](?:継|替|継続|乗替|前走騎手不明)[^）)]*[）)]", "", text).strip()
 
 
@@ -36,7 +29,7 @@ def same_jockey(previous: Any, current: Any, *, previous_id: Any = None, current
         return None
     if previous_id not in (None, "") and current_id not in (None, ""):
         return str(previous_id) == str(current_id)
-    if _same_jockey_display_name(before, now):
+    if before == now:
         return True
     for full, abbreviations in SAFE_ABBREVIATIONS.items():
         if {before, now} <= ({full} | abbreviations):
@@ -75,10 +68,9 @@ def jockey_display(horse: Mapping[str, Any]) -> JockeyDisplay:
         current_id=horse.get("jockey_id"),
     )
     if identity is True:
-        preferred = _preferred_jockey_display_name(previous, current) or current
+        preferred = current if len(current) >= len(previous) else previous
         return JockeyDisplay(f"{preferred}（継続）", "continued")
     if identity is False:
         return JockeyDisplay(f"{previous} → {current}", "changed")
     # Do not repeat a possibly wrong source-side change assertion.
     return JockeyDisplay(current, "unknown")
-
