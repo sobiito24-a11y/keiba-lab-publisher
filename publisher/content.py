@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from typing import Any, Iterable, Mapping
 
+from .confidence import SHOW_PUBLIC_SS_DEFAULT, assess_confidence
 from .jockey import jockey_display
 
 MARK_ORDER = ("◎", "○", "▲", "△", "☆")
@@ -209,9 +210,31 @@ def short_commentary(race: Mapping[str, Any]) -> str:
     return _safe_sentence(first + second_line)
 
 
-def note_race_section(race: Mapping[str, Any], owner_comment: str = "") -> str:
+def _confidence_note_lines(race: Mapping[str, Any], *, show_public_ss: bool) -> list[str]:
+    assessment = assess_confidence(race, show_public_ss=show_public_ss)
+    public = assessment.public_confidence_rank
+    if not public:
+        return []
+    lines = [f"**注目度：{public}**"]
+    if public != "S":
+        return lines
+    positives = list(assessment.confidence_positive_materials)
+    lines.extend(["", "### 🐴 注目度S", ""])
+    if positives:
+        lines.append("能力評価・今回評価と保存済み条件を照合し、" + "、".join(positives[:4]) + "を確認できます。")
+    else:
+        lines.append("保存済みPrediction Snapshotの材料を固定基準で照合した結果、注目度Sとなりました。")
+    lines.extend(["", "買い推奨を示すものではなく、◎の材料が複数そろっていることを示す補助評価です。", "", "### 【気になるポイント】", ""])
+    if assessment.confidence_warning_materials:
+        lines.extend(f"- {warning}" for warning in assessment.confidence_warning_materials)
+    else:
+        lines.append("大きなマイナス材料は保存されていません。")
+    return lines
+
+
+def note_race_section(race: Mapping[str, Any], owner_comment: str = "", *, show_public_ss: bool = SHOW_PUBLIC_SS_DEFAULT) -> str:
     mark_lines = [f"{text(h.get('mark'))} {text(h.get('horse_no'))}番 {text(h.get('horse_name'))}" for h in marked_horses(race)]
-    lines = [f"### {text(race.get('venue'))}{race_number(race)}", "", *(mark_lines or ["印：保存データ内に該当なし"]), "", "### 🔍 AIレース考察", "", race_commentary(race)]
+    lines = [f"### {text(race.get('venue'))}{race_number(race)}", "", *_confidence_note_lines(race, show_public_ss=show_public_ss), "", *(mark_lines or ["印：保存データ内に該当なし"]), "", "### 🔍 AIレース考察", "", race_commentary(race)]
     honmei = marked_map(race).get("◎")
     if honmei:
         facts = [text(honmei.get("ability_band")) or "-", text(honmei.get("ability_value")) or "-", f"能力{text(honmei.get('ability_rank')) or '-'}位", f"今回{text(honmei.get('current_evaluation_rank')) or '-'}位"]
@@ -233,10 +256,14 @@ def note_race_section(race: Mapping[str, Any], owner_comment: str = "") -> str:
     return result
 
 
-def note_article(venue: str, races: Iterable[Mapping[str, Any]], race_date: str, *, intro: str = DEFAULT_NOTE_INTRO, owner_comments: Mapping[str, str] | None = None) -> str:
+def note_article(venue: str, races: Iterable[Mapping[str, Any]], race_date: str, *, intro: str = DEFAULT_NOTE_INTRO, owner_comments: Mapping[str, str] | None = None, show_public_ss: bool = SHOW_PUBLIC_SS_DEFAULT) -> str:
+    races = list(races)
     lines = [text(intro), "", f"## 🐎 {_month_day(race_date)} {venue}競馬｜全レースAI予想"]
+    s_races = [race for race in races if assess_confidence(race, show_public_ss=show_public_ss).public_confidence_rank in {"S", "SS"}]
+    if s_races:
+        lines.extend(["", "## 🐴 本日の注目レース", "", "【S】", *[f"- {text(race.get('venue'))}{race_number(race)}" for race in s_races], "", "Aランクは各レース欄に表示しています。"])
     for race in races:
-        lines.extend(["", note_race_section(race, (owner_comments or {}).get(text(race.get("race_id")), ""))])
+        lines.extend(["", note_race_section(race, (owner_comments or {}).get(text(race.get("race_id")), ""), show_public_ss=show_public_ss)])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -254,23 +281,26 @@ def x_weighted_length(body: str) -> int:
     return len(re.sub(r"https?://\S+", "", body)) + 23 * len(urls)
 
 
-def x_post(race: Mapping[str, Any], note_url: str = "") -> str:
+def x_post(race: Mapping[str, Any], note_url: str = "", *, show_public_ss: bool = SHOW_PUBLIC_SS_DEFAULT) -> str:
     venue, rno = text(race.get("venue")), race_number(race)
     marked = marked_horses(race)
     mark_lines = []
     for horse in marked:
         number = _number_value(horse.get("horse_no"))
         mark_lines.append(f"{text(horse.get('mark'))}{_CIRCLED.get(number, text(horse.get('horse_no')))} {text(horse.get('horse_name'))}")
-    lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *(mark_lines or ["保存データ内に印情報なし"]), "", short_commentary(race)]
+    public_rank = assess_confidence(race, show_public_ss=show_public_ss).public_confidence_rank
+    rank_lines = [f"🐴 注目度{public_rank}", ""] if public_rank in {"S", "SS"} else []
+    lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *rank_lines, *(mark_lines or ["保存データ内に印情報なし"]), "", short_commentary(race)]
     if note_url:
         lines.extend(["", "🐴全レース予想・詳しいAI考察はnote👇", note_url])
     lines.extend(["", f"#{venue}{rno} #AI競馬予想"])
     body = _safe_sentence("\n".join(lines)).strip()
     if x_weighted_length(body) > 280:
-        lines = lines[:len(marked) + 2] + ["", short_commentary(race).split("。")[0] + "。"] + (["", "🐴全レース予想はnote👇", note_url] if note_url else []) + ["", f"#{venue}{rno}"]
+        compact_rank = ["", f"🐴 注目度{public_rank}"] if public_rank in {"S", "SS"} else []
+        lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", *compact_rank, "", *(mark_lines or ["保存データ内に印情報なし"]), "", short_commentary(race).split("。")[0] + "。"] + (["", "🐴全レース予想はnote👇", note_url] if note_url else []) + ["", f"#{venue}{rno}"]
         body = _safe_sentence("\n".join(lines)).strip()
     if x_weighted_length(body) > 280:
-        lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", "", *(mark_lines or ["保存データ内に印情報なし"])]
+        lines = [f"【{venue}{rno}｜KEIBA LAB AI予想】", *(["", f"🐴 注目度{public_rank}"] if public_rank in {"S", "SS"} else []), "", *(mark_lines or ["保存データ内に印情報なし"])]
         if note_url:
             lines.extend(["", "🐴詳しいAI考察はnote👇", note_url])
         body = _safe_sentence("\n".join(lines)).strip()

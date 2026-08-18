@@ -8,6 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from publisher.content import DEFAULT_NOTE_INTRO, DEFAULT_PINNED_POST, group_by_venue, note_article, note_title, race_number, short_commentary, x_post, x_weighted_length
+from publisher.confidence import SHOW_PUBLIC_SS_DEFAULT, assess_confidence, assess_snapshot
 from publisher.operations import OPERATION_MODES, publication_candidate, visible_x_races
 from publisher.results import ResultDataError, load_result_json, merge_result_upload, result_map_from_snapshot, result_reply
 from publisher.snapshot import LoadedPrediction, load_prediction
@@ -43,16 +44,23 @@ def _get_loaded(data: bytes) -> LoadedPrediction:
     return st.session_state.loaded_prediction
 
 
+def _sync_confidence_state(state: dict[str, Any], snapshot: Mapping[str, Any]) -> None:
+    # Current release always keeps SS private. The setting remains persisted for future release work.
+    state["show_public_ss"] = SHOW_PUBLIC_SS_DEFAULT
+    state["confidence_ranks"] = assess_snapshot(snapshot.get("races") or [], show_public_ss=state["show_public_ss"])
+
+
 def _ensure_drafts(state: dict[str, Any], snapshot: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    _sync_confidence_state(state, snapshot)
     grouped = group_by_venue(snapshot, exclude_debut=bool(state.get("exclude_debut", True)))
     race_date = _event_date(snapshot)
     for venue, races in grouped.items():
-        generated = note_article(venue, races, race_date, intro=state.get("note_intro") or DEFAULT_NOTE_INTRO, owner_comments=state.get("owner_comments") or {})
+        generated = note_article(venue, races, race_date, intro=state.get("note_intro") or DEFAULT_NOTE_INTRO, owner_comments=state.get("owner_comments") or {}, show_public_ss=bool(state.get("show_public_ss", False)))
         state.setdefault("note_generated", {})[venue] = generated
         state.setdefault("note_drafts", {}).setdefault(venue, generated)
         url = state.setdefault("note_urls", {}).get(venue, "")
         for race in races:
-            race_id = _text(race.get("race_id")); generated_x = x_post(race, url)
+            race_id = _text(race.get("race_id")); generated_x = x_post(race, url, show_public_ss=bool(state.get("show_public_ss", False)))
             state.setdefault("x_generated", {})[race_id] = generated_x
             state.setdefault("x_drafts", {}).setdefault(race_id, generated_x)
             state.setdefault("race_status", {}).setdefault(race_id, "原稿生成済")
@@ -67,7 +75,7 @@ def _status_panel(state: Mapping[str, Any], venue: str, races: list[Mapping[str,
     c1.metric("note", "✅ 原稿生成済み" if state.get("note_drafts", {}).get(venue) else "⬜ 未生成")
     c2.metric("note URL", "✅ 登録済み" if state.get("note_urls", {}).get(venue) else "⬜ 未登録")
     c3.metric("X公開記録", f"{len(posted & {_text(r.get('race_id')) for r in races})}/{len(races)}")
-    st.dataframe([{"レース": f"{venue}{race_number(r)}", "X": "✅ 投稿済み" if _text(r.get("race_id")) in posted else "⬜ 未投稿", "結果": "✅" if (results.get(_text(r.get("race_id"))) or {}).get("results") else "⏳"} for r in races], hide_index=True, use_container_width=True)
+    st.dataframe([{"レース": f"{venue}{race_number(r)}", "注目度": (state.get("confidence_ranks", {}).get(_text(r.get("race_id"))) or {}).get("public_confidence_rank", ""), "X": "✅ 投稿済み" if _text(r.get("race_id")) in posted else "⬜ 未投稿", "結果": "✅" if (results.get(_text(r.get("race_id"))) or {}).get("results") else "⏳"} for r in races], hide_index=True, use_container_width=True)
 
 
 def _note_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]], race_date: str) -> None:
@@ -80,7 +88,7 @@ def _note_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]]
         for race in races:
             rid = _text(race.get("race_id")); state.setdefault("owner_comments", {})[rid] = st.text_input(f"{venue}{race_number(race)}", value=state.get("owner_comments", {}).get(rid, ""), key=f"owner-{rid}")
     if st.button("note原稿を再生成", key=f"regen-note-{venue}", use_container_width=True):
-        generated = note_article(venue, races, race_date, intro=state.get("note_intro") or DEFAULT_NOTE_INTRO, owner_comments=state.get("owner_comments") or {})
+        generated = note_article(venue, races, race_date, intro=state.get("note_intro") or DEFAULT_NOTE_INTRO, owner_comments=state.get("owner_comments") or {}, show_public_ss=bool(state.get("show_public_ss", False)))
         state["note_generated"][venue] = generated; state["note_drafts"][venue] = generated
     draft = st.text_area("全レースnote完成原稿（編集可）", value=state["note_drafts"].get(venue, ""), height=650, key=f"note-{venue}")
     state["note_drafts"][venue] = draft
@@ -96,7 +104,7 @@ def _x_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]]) -
         state["note_urls"][venue] = url
         for race in races:
             rid = _text(race.get("race_id")); previous_generated = state.get("x_generated", {}).get(rid, ""); current_draft = state.get("x_drafts", {}).get(rid, "")
-            generated = x_post(race, url); state["x_generated"][rid] = generated
+            generated = x_post(race, url, show_public_ss=bool(state.get("show_public_ss", False))); state["x_generated"][rid] = generated
             if not current_draft or current_draft == previous_generated:
                 state["x_drafts"][rid] = generated
             elif old_url and old_url in current_draft:
@@ -108,7 +116,7 @@ def _x_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]]) -
             st.info(f"🐴 本日の公開候補：{candidate['label']}\n\n{candidate['reason']}")
             if st.button("このレースをX無料公開にする", key=f"candidate-{venue}"):
                 state["free_race_ids"] = [candidate["race_id"]]
-        options = {_text(r.get("race_id")): f"{venue}{race_number(r)}" for r in races}
+        options = {_text(r.get("race_id")): f"{venue}{race_number(r)}" + (f"｜注目度{assess_confidence(r).public_confidence_rank}" if assess_confidence(r).public_confidence_rank else "") for r in races}
         current = (state.get("free_race_ids") or [next(iter(options))])[0]
         if current not in options: current = next(iter(options))
         chosen = st.selectbox("本日のX無料公開レース", list(options), index=list(options).index(current), format_func=lambda rid: options[rid])
@@ -118,15 +126,15 @@ def _x_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]]) -
     visible = visible_x_races(mode, races, (state.get("free_race_ids") or [""])[0])
     if not url: st.warning("note公開後にURLを入力すると、URL込みの完成X投稿文へ更新されます。")
     for race in visible:
-        rid = _text(race.get("race_id")); header = f"{venue}{race_number(race)}"
+        rid = _text(race.get("race_id")); public_rank = (state.get("confidence_ranks", {}).get(rid) or {}).get("public_confidence_rank", ""); header = f"{venue}{race_number(race)}" + (f"｜注目度 {public_rank}" if public_rank else "")
         with st.expander(header, expanded=len(visible) == 1):
-            draft = st.text_area(f"{header} X投稿文（編集可）", value=state["x_drafts"].get(rid, x_post(race, url)), height=270, key=f"x-{rid}")
+            draft = st.text_area(f"{header} X投稿文（編集可）", value=state["x_drafts"].get(rid, x_post(race, url, show_public_ss=bool(state.get("show_public_ss", False)))), height=270, key=f"x-{rid}")
             state["x_drafts"][rid] = draft; length = x_weighted_length(draft)
             st.caption(f"X換算 {length} / 280文字")
             if url and url not in draft: st.warning("手動修正版に当日のnote URLがありません。再生成するか、URLを本文へ追加してください。")
             if length > 280: st.error("280文字を超えています。再生成すると保存済み事実を維持したまま自動短縮します。")
             if st.button("保存データから再生成・自動短縮", key=f"regen-x-{rid}"):
-                generated = x_post(race, url); state["x_generated"][rid] = generated; state["x_drafts"][rid] = generated; st.rerun()
+                generated = x_post(race, url, show_public_ss=bool(state.get("show_public_ss", False))); state["x_generated"][rid] = generated; state["x_drafts"][rid] = generated; st.rerun()
             _copy_button("📋 X投稿文をコピー", draft, f"x-{rid}")
             is_free = rid in (state.get("free_race_ids") or [])
             if st.button("X投稿済みにする", key=f"published-{rid}", use_container_width=True):
@@ -175,6 +183,8 @@ def main() -> None:
     st.success(f"② {_event_date(snapshot)}｜{_mode_label(snapshot)}｜{len(snapshot.get('races') or [])}レース。Prediction Snapshotは読み取り専用です。")
     state["operation_mode"] = st.radio("③ 今日の運用モード", OPERATION_MODES, index=OPERATION_MODES.index(state.get("operation_mode", OPERATION_MODES[0])), horizontal=True)
     state["exclude_debut"] = st.toggle("新馬戦を除外", value=bool(state.get("exclude_debut", True)))
+    st.checkbox("SSを公開表示", value=False, disabled=True, help="将来の公開解禁用設定です。現在は内部SSも注目度Sとして公開します。")
+    st.caption("注目度ランクは現在検証中です。予想・印・買い推奨を変更するものではありません。")
     grouped = _ensure_drafts(state, snapshot)
     if not grouped: st.warning("掲載対象レースがありません。"); return
     venue = st.radio("会場", list(grouped), horizontal=True); races = grouped[venue]

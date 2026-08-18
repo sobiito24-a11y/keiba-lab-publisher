@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .confidence import assess_confidence
 from .content import marked_map, race_number, text, value_horses
 
 OPERATION_MODES = ("🏢 通常平日", "🏃 忙しい日", "🌴 休日")
@@ -9,13 +10,17 @@ OPERATION_MODES = ("🏢 通常平日", "🏃 忙しい日", "🌴 休日")
 
 def publication_candidate(races: list[Mapping[str, Any]]) -> dict[str, Any] | None:
     """Suggest interesting public content using saved facts only; never predict."""
-    candidates: list[tuple[int, int, Mapping[str, Any], list[str]]] = []
+    candidates: list[tuple[int, int, int, Mapping[str, Any], list[str]]] = []
     for index, race in enumerate(races):
         marks = marked_map(race)
         honmei = marks.get("◎")
         if not honmei:
             continue
         reasons: list[str] = []
+        confidence = assess_confidence(race)
+        rank_priority = {"SS": 4, "S": 3, "A": 2, "対象外": 1}[confidence.internal_confidence_rank]
+        if confidence.internal_confidence_rank in {"SS", "S", "A"}:
+            reasons.append(f"注目度{confidence.public_confidence_rank}の固定条件に該当")
         score = 0
         if str(honmei.get("current_evaluation_rank") or "") == "1":
             score += 3
@@ -37,14 +42,15 @@ def publication_candidate(races: list[Mapping[str, Any]]) -> dict[str, Any] | No
         if value_horses(race):
             score += 2
             reasons.append("保存済みの妙味材料あり")
-        candidates.append((score, -index, race, reasons))
+        candidates.append((rank_priority, score, -index, race, reasons))
     if not candidates:
         return None
-    score, _, race, reasons = max(candidates, key=lambda item: (item[0], item[1]))
+    rank_priority, score, _, race, reasons = max(candidates, key=lambda item: (item[0], item[1], item[2]))
     return {
         "race_id": text(race.get("race_id")),
         "label": f"{text(race.get('venue'))}{race_number(race)}",
         "score": score,
+        "confidence_priority": rank_priority,
         "reason": "、".join(reasons[:2]) + "という特徴があり、公開コンテンツとして組み立てやすいレースです。",
     }
 

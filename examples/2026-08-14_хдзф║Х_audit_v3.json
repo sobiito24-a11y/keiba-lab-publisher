@@ -1,0 +1,29 @@
+{
+  "race_count": 10,
+  "venues": [
+    "大井"
+  ],
+  "errors": [],
+  "prediction_signature_unchanged": true,
+  "prediction_recalculation_count": 0,
+  "note_sections": 10,
+  "x_max_weighted_length": 203,
+  "note_url_all_posts": true,
+  "marks_all_present": true,
+  "internal_labels": [],
+  "candidate": {
+    "race_id": "202644081401",
+    "label": "大井1R",
+    "score": 11,
+    "reason": "◎が保存済み総合評価1位、◎が能力評価1位という特徴があり、公開コンテンツとして組み立てやすいレースです。"
+  },
+  "mode_counts": {
+    "🏢 通常平日": 10,
+    "🏃 忙しい日": 1,
+    "🌴 休日": 1
+  },
+  "official_results_available": 0,
+  "actual_result_reply": "結果データ未取得",
+  "manual_records": 10,
+  "duplicates_blocked": true
+}
