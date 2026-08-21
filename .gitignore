@@ -5,3 +5,6 @@ secrets.toml
 publisher_state/
 __pycache__/
 .pytest_cache/
+.venv/
+.venv_ops/
+.note_browser_profile/

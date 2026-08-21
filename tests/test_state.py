@@ -19,7 +19,11 @@ from publisher.state import (
 def test_publisher_save_roundtrip_and_manual_edits(loaded):
     state = new_state(loaded.source_info)
     state["note_urls"]["新潟"] = "https://note.example/niigata"
+    state["note_titles"]["新潟"] = "投稿用タイトル"
+    state["note_tags"]["新潟"] = "競馬予想, AI競馬予想"
     state["note_drafts"]["新潟"] = "手動編集したnote原稿"
+    state["note_draft_records"].append({"title": "投稿用タイトル", "status": "下書き済み"})
+    state["reading_articles"].append({"theme": "今回評価とは？", "title": "読み物", "body": "本文", "tags": ["KEIBA LAB"], "status": "未投稿", "created_at": "2026-08-21T12:00:00"})
     race_id = loaded.source_info["race_ids"][0]
     state["x_drafts"][race_id] = "手動編集したX原稿"
     state["x_targets"][race_id] = False
@@ -27,6 +31,10 @@ def test_publisher_save_roundtrip_and_manual_edits(loaded):
     state["free_race_ids"] = [race_id]
     restored = load_state(dump_state(state), source_info=loaded.source_info)
     assert restored["note_drafts"] == state["note_drafts"]
+    assert restored["note_titles"] == state["note_titles"]
+    assert restored["note_tags"] == state["note_tags"]
+    assert restored["note_draft_records"] == state["note_draft_records"]
+    assert restored["reading_articles"] == state["reading_articles"]
     assert restored["x_drafts"] == state["x_drafts"]
     assert restored["x_targets"] == state["x_targets"]
     assert restored["operation_mode"] == state["operation_mode"]

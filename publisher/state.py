@@ -24,11 +24,13 @@ def new_state(source_info: Mapping[str, Any]) -> dict[str, Any]:
         "format": PUBLISHER_FORMAT, "schema_version": 3, "created_at": now, "updated_at": now,
         "source": copy.deepcopy(dict(source_info)), "exclude_debut": True,
         "operation_mode": OPERATION_MODES[0], "publication_mode": "全レース無料", "free_race_ids": [],
-        "note_urls": {}, "note_intro": "", "note_generated": {}, "note_drafts": {}, "owner_comments": {},
+        "note_urls": {}, "note_titles": {}, "note_tags": {}, "note_intro": "", "note_generated": {}, "note_drafts": {}, "owner_comments": {},
+        "note_draft_records": [], "note_automation": {},
         "x_generated": {}, "x_drafts": {}, "x_targets": {}, "race_status": {},
         "publication_records": [], "result_data": {}, "result_comments": {}, "result_reply_drafts": {},
+        "reading_articles": [],
         "show_public_ss": False, "confidence_ranks": {},
-        "legacy_x_api_history": [],
+        "legacy_x_api_history": [], "post_history": [],
         "publication_sections": {"free": ["marks", "short_commentary"], "note": ["all_races", "detail_analysis"]},
     }
 
@@ -42,7 +44,11 @@ def dump_state(state: Mapping[str, Any]) -> bytes:
 def load_state(data: bytes, *, source_info: Mapping[str, Any] | None = None) -> dict[str, Any]:
     try: state = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc: raise PublisherStateError("Publisher保存ファイルが破損しています。") from exc
+    if not isinstance(state, dict):
+        raise PublisherStateError("Publisher保存形式が不正です。")
     version = state.get("schema_version")
+    if version not in {1, 2} and state.get("format") != PUBLISHER_FORMAT:
+        raise PublisherStateError("Publisher保存形式が不正です。")
     if version in {1, 2}: state = _migrate_legacy(state)
     state = _with_defaults(state)
     validate_state(state)
@@ -83,6 +89,8 @@ def validate_state(state: Mapping[str, Any]) -> None:
     if state.get("operation_mode") not in OPERATION_MODES: raise PublisherStateError("運用モードが不正です。")
     if not isinstance(state.get("show_public_ss", False), bool): raise PublisherStateError("SS公開設定が不正です。")
     if not isinstance(state.get("confidence_ranks", {}), Mapping): raise PublisherStateError("注目度保存形式が不正です。")
+    if not isinstance(state.get("note_draft_records", []), list): raise PublisherStateError("note下書き記録の保存形式が不正です。")
+    if not isinstance(state.get("reading_articles", []), list): raise PublisherStateError("読み物記事の保存形式が不正です。")
     race_ids = state.get("source", {}).get("race_ids") or []
     if len(race_ids) != len(set(race_ids)): raise PublisherStateError("race_idが重複しています。")
 
@@ -109,10 +117,30 @@ def record_manual_publication(state: dict[str, Any], race: Mapping[str, Any], bo
 # Compatibility names for legacy callers/tests. These never call X.
 def ensure_can_post(state: Mapping[str, Any], race_id: str, account: str = "", post_type: str = "") -> None:
     ensure_can_record_publication(state, race_id)
+    if any(str(row.get("race_id")) == str(race_id) and str(row.get("status")) == "投稿済" for row in state.get("post_history") or []):
+        raise DuplicatePublicationError(f"{race_id} はすでにX投稿済みとして記録されています。")
 
 
 def record_post(state: dict[str, Any], race_id: str, account: str, post_type: str, status: str, **kwargs: Any) -> None:
-    if status != "投稿済":
-        raise PublisherStateError("Ver.3ではAPI投稿失敗履歴を記録しません。")
-    race = {"race_id": race_id, "date": "", "venue": "", "race_number": ""}
-    record_manual_publication(state, race, str(kwargs.get("body") or ""), str(kwargs.get("note_url") or ""), free_publication=False)
+    body = str(kwargs.get("body") or "")
+    note_url = str(kwargs.get("note_url") or "")
+    now = datetime.now().isoformat(timespec="seconds")
+    if status == "投稿済":
+        ensure_can_post(state, race_id, account, post_type)
+    state.setdefault("post_history", []).append({
+        "race_id": race_id,
+        "account": account,
+        "post_type": post_type,
+        "status": status,
+        "body": body,
+        "post_id": str(kwargs.get("post_id") or ""),
+        "note_url": note_url,
+        "message": str(kwargs.get("message") or ""),
+        "http_status": kwargs.get("http_status"),
+        "retryable": bool(kwargs.get("retryable", False)),
+        "created_at": now,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    })
+    if status == "投稿済":
+        race = {"race_id": race_id, "date": "", "venue": "", "race_number": ""}
+        record_manual_publication(state, race, body, note_url, free_publication=False)
