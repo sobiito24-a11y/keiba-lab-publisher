@@ -68,6 +68,7 @@ def test_jra_prediction_payload_uses_snapshot_body_and_fixed_image(snapshot):
     assert "中央競馬" in payload.tags
     assert "KEIBALAB" in payload.tags
     assert "## 🐎 8/9 新潟競馬｜全レースAI予想" in payload.body
+    assert "#競馬予想 #AI競馬予想 #KEIBALAB #中央競馬 #新潟競馬" in payload.body
     assert prediction_signature(snapshot) == before
 
 
@@ -80,7 +81,22 @@ def test_nar_prediction_payload_uses_fixed_local_image(nar_keiba):
     assert payload.heading_image_path.exists()
     assert "地方競馬" in payload.tags
     assert "KEIBALAB" in payload.tags
+    assert "#競馬予想 #AI競馬予想 #KEIBALAB #地方競馬 #大井競馬" in payload.body
     assert prediction_signature(snapshot) == loaded.immutable_prediction_sha256
+
+
+def test_prediction_payload_does_not_duplicate_existing_body_hashtags(snapshot):
+    races = group_by_venue(snapshot)["札幌"]
+    payload = build_prediction_note_payload(
+        "札幌",
+        races,
+        "2026-08-09",
+        body="本文を編集しました。\n\n#競馬予想 #KEIBALAB\n",
+        tags=["競馬予想", "AI競馬予想", "KEIBALAB", "札幌競馬"],
+    )
+    assert payload.body.count("#競馬予想") == 1
+    assert payload.body.count("#KEIBALAB") == 1
+    assert "#AI競馬予想 #札幌競馬" in payload.body
 
 
 def test_note_payload_generation_never_calls_predictors(keiba_data, monkeypatch):

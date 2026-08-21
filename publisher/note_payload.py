@@ -88,6 +88,30 @@ def normalize_note_tags(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(tags)
 
 
+def hashtag_line(tags: Iterable[str]) -> str:
+    return " ".join(f"#{tag}" for tag in normalize_note_tags(tags))
+
+
+def _hashtags_in_body(body: str) -> set[str]:
+    trailing_punctuation = ".,、。!！?？;；:：)]）】」』\"'"
+    return {
+        normalize_note_tag(match.group(1).strip(trailing_punctuation))
+        for match in re.finditer(r"#([^\s#　]+)", body)
+        if normalize_note_tag(match.group(1).strip(trailing_punctuation))
+    }
+
+
+def append_body_hashtags(body: str, tags: Iterable[str]) -> str:
+    if not body.strip():
+        return body
+    normalized_tags = normalize_note_tags(tags)
+    existing_tags = _hashtags_in_body(body)
+    missing_tags = [tag for tag in normalized_tags if tag not in existing_tags]
+    if not missing_tags:
+        return body
+    return f"{body.rstrip()}\n\n{hashtag_line(missing_tags)}\n"
+
+
 def prediction_tags(*, race_mode: str, venue: str) -> tuple[str, ...]:
     mode = text(race_mode).lower()
     mode_tag = "中央競馬" if mode == "jra" else "地方競馬" if mode == "nar" else "競馬"
@@ -118,10 +142,11 @@ def build_prediction_note_payload(
         if intro is not None:
             kwargs["intro"] = intro
         article_body = note_article(venue, race_list, race_date, **kwargs)
+    payload_tags = normalize_note_tags(tags) if tags is not None else prediction_tags(race_mode=race_mode, venue=venue)
     payload = NoteDraftPayload(
         title=title or note_title(venue, race_date),
-        body=article_body,
-        tags=normalize_note_tags(tags) if tags is not None else prediction_tags(race_mode=race_mode, venue=venue),
+        body=append_body_hashtags(article_body, payload_tags),
+        tags=payload_tags,
         article_type=PREDICTION_ARTICLE_TYPES[race_mode],
         heading_image_path=heading_image_for_mode(race_mode),
         source={
@@ -141,10 +166,11 @@ def build_reading_note_payload(article: Mapping[str, Any]) -> NoteDraftPayload:
     tags = tuple(text(tag) for tag in raw_tags if text(tag)) if isinstance(raw_tags, list) else tuple(
         part.strip() for part in text(raw_tags).split(",") if part.strip()
     )
+    payload_tags = normalize_note_tags(tags or (DEFAULT_BRAND_TAG, "AI競馬予想", "競馬予想"))
     payload = NoteDraftPayload(
         title=text(article.get("title")),
-        body=text(article.get("body")),
-        tags=normalize_note_tags(tags or (DEFAULT_BRAND_TAG, "AI競馬予想", "競馬予想")),
+        body=append_body_hashtags(text(article.get("body")), payload_tags),
+        tags=payload_tags,
         article_type=READING_ARTICLE_TYPE,
         heading_image_path=None,
         source={"kind": "reading", "theme": text(article.get("theme")), "article_id": text(article.get("id"))},

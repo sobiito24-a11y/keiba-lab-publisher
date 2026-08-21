@@ -53,3 +53,4 @@ def test_reading_article_update_and_payload():
     assert payload.heading_image_path is None
     assert payload.title == "編集タイトル"
     assert payload.tags == ("KEIBALAB", "検証")
+    assert payload.body.endswith("#KEIBALAB #検証\n")

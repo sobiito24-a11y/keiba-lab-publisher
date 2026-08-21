@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
+import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Mapping
 
 import streamlit as st
@@ -13,7 +16,7 @@ from publisher.confidence import SHOW_PUBLIC_SS_DEFAULT, assess_confidence, asse
 from publisher.operations import OPERATION_MODES, publication_candidate, visible_x_races
 from publisher.results import ResultDataError, load_result_json, merge_result_upload, result_map_from_snapshot, result_reply
 from publisher.note_automation import NoteDraftAutomationError, NoteDraftConfig, save_note_draft
-from publisher.note_payload import NotePayloadError, build_prediction_note_payload, build_reading_note_payload
+from publisher.note_payload import NotePayloadError, build_prediction_note_payload, build_reading_note_payload, hashtag_line
 from publisher.reading import DuplicateReadingThemeError, READING_STATUSES, ReadingArticleError, generate_reading_article, generate_reading_candidates, reading_theme_options, update_reading_article
 from publisher.snapshot import LoadedPrediction, load_prediction
 from publisher.state import DuplicatePublicationError, dump_state, load_state, new_state, record_manual_publication
@@ -49,6 +52,72 @@ def _split_tags(value: str) -> tuple[str, ...]:
 
 def _tags_text(tags: list[str] | tuple[str, ...]) -> str:
     return ", ".join(tags)
+
+
+def _is_streamlit_cloud_runtime() -> bool:
+    truthy = {"1", "true", "yes", "on"}
+    for name in ("STREAMLIT_CLOUD", "STREAMLIT_SHARING_MODE", "IS_RUNNING_IN_STREAMLIT_SHARING"):
+        value = os.environ.get(name, "").strip().lower()
+        if value in truthy:
+            return True
+    return Path.cwd().as_posix().startswith("/mount/src/")
+
+
+def _post_set_text(payload: Any) -> str:
+    tags = hashtag_line(payload.tags)
+    parts = [
+        "タイトル",
+        payload.title,
+        "",
+        "本文",
+        payload.body,
+        "",
+        "タグ",
+        tags,
+    ]
+    if payload.heading_image_path:
+        parts.extend(["", "見出し画像", str(payload.heading_image_path)])
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _post_set_key_suffix(payload: Any) -> str:
+    raw = "\0".join([payload.title, payload.body, hashtag_line(payload.tags)])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _post_set_panel(payload: Any, key: str) -> None:
+    st.subheader("投稿セット")
+    suffix = _post_set_key_suffix(payload)
+    if _is_streamlit_cloud_runtime():
+        st.info("Streamlit Cloudではnoteのブラウザ自動操作を無効化しています。下の投稿セットをnoteへ移してください。")
+    if payload.heading_image_path:
+        st.image(str(payload.heading_image_path), caption="見出し画像", use_column_width=True)
+        try:
+            st.download_button(
+                "見出し画像を保存",
+                payload.heading_image_path.read_bytes(),
+                file_name=payload.heading_image_path.name,
+                mime="image/png",
+                key=f"{key}-image-download",
+                use_container_width=True,
+            )
+        except OSError:
+            st.warning("見出し画像を読み込めませんでした。")
+    _copy_button("タイトルをコピー", payload.title, f"{key}-title-copy")
+    st.text_area("タイトル（コピー用）", value=payload.title, height=88, key=f"{key}-title-text-{suffix}")
+    _copy_button("本文をコピー（末尾タグ込み）", payload.body, f"{key}-body-copy")
+    st.text_area("本文（末尾タグ込み）", value=payload.body, height=460, key=f"{key}-body-text-{suffix}")
+    tags = hashtag_line(payload.tags)
+    _copy_button("タグをコピー", tags, f"{key}-tags-copy")
+    st.text_area("タグ（コピー用）", value=tags, height=88, key=f"{key}-tags-text-{suffix}")
+    st.download_button(
+        "投稿セットをテキスト保存",
+        _post_set_text(payload).encode("utf-8"),
+        file_name=f"{payload.article_type}_note_post_set.txt",
+        mime="text/plain",
+        key=f"{key}-set-download",
+        use_container_width=True,
+    )
 
 
 def _note_automation_config(state: dict[str, Any], key: str) -> NoteDraftConfig:
@@ -158,14 +227,16 @@ def _note_section(state: dict[str, Any], venue: str, races: list[dict[str, Any]]
         payload = build_prediction_note_payload(venue, races, race_date, body=draft, title=title, tags=_split_tags(tags_value))
         st.subheader("投稿前確認")
         _payload_summary(payload)
-        config = _note_automation_config(state, f"prediction-{venue}")
-        if st.button("noteへ下書き保存", key=f"note-draft-{venue}", use_container_width=True):
-            try:
-                result = save_note_draft(payload, config=config)
-                _record_note_draft(state, payload, result.url)
-                st.success("note下書き保存まで完了しました。公開はしていません。")
-            except NoteDraftAutomationError as exc:
-                st.error(f"{exc}（停止位置: {exc.step or '不明'}）")
+        _post_set_panel(payload, f"prediction-{venue}")
+        if not _is_streamlit_cloud_runtime():
+            config = _note_automation_config(state, f"prediction-{venue}")
+            if st.button("noteへ下書き保存", key=f"note-draft-{venue}", use_container_width=True):
+                try:
+                    result = save_note_draft(payload, config=config)
+                    _record_note_draft(state, payload, result.url)
+                    st.success("note下書き保存まで完了しました。公開はしていません。")
+                except NoteDraftAutomationError as exc:
+                    st.error(f"{exc}（停止位置: {exc.step or '不明'}）")
     except NotePayloadError as exc:
         st.error(str(exc))
 
@@ -232,17 +303,19 @@ def _reading_section(state: dict[str, Any]) -> None:
         payload = build_reading_note_payload(preview)
         st.subheader("投稿前確認")
         _payload_summary(payload)
-        config = _note_automation_config(state, f"reading-{selected}")
-        if st.button("noteへ下書き保存", key=f"reading-draft-{selected}", use_container_width=True):
-            try:
-                result = save_note_draft(payload, config=config)
-                preview["status"] = "下書き済み"
-                articles[selected] = preview
-                _record_note_draft(state, payload, result.url)
-                st.success("読み物をnote下書きに保存しました。公開はしていません。")
-                st.rerun()
-            except NoteDraftAutomationError as exc:
-                st.error(f"{exc}（停止位置: {exc.step or '不明'}）")
+        _post_set_panel(payload, f"reading-{selected}")
+        if not _is_streamlit_cloud_runtime():
+            config = _note_automation_config(state, f"reading-{selected}")
+            if st.button("noteへ下書き保存", key=f"reading-draft-{selected}", use_container_width=True):
+                try:
+                    result = save_note_draft(payload, config=config)
+                    preview["status"] = "下書き済み"
+                    articles[selected] = preview
+                    _record_note_draft(state, payload, result.url)
+                    st.success("読み物をnote下書きに保存しました。公開はしていません。")
+                    st.rerun()
+                except NoteDraftAutomationError as exc:
+                    st.error(f"{exc}（停止位置: {exc.step or '不明'}）")
     except (ReadingArticleError, NotePayloadError) as exc:
         st.error(str(exc))
 
