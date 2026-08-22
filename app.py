@@ -20,6 +20,7 @@ from publisher.note_payload import NotePayloadError, build_prediction_note_paylo
 from publisher.reading import DuplicateReadingThemeError, READING_STATUSES, ReadingArticleError, generate_reading_article, generate_reading_candidates, reading_theme_options, update_reading_article
 from publisher.snapshot import LoadedPrediction, load_prediction
 from publisher.state import DuplicatePublicationError, dump_state, load_state, new_state, record_manual_publication
+from publisher.upload import KeibaUploadError, read_uploaded_keiba
 
 
 def _text(value: Any) -> str: return "" if value is None else str(value).strip()
@@ -156,7 +157,7 @@ def _record_note_draft(state: dict[str, Any], payload: Any, result_url: str) -> 
 
 
 def _get_loaded(data: bytes) -> LoadedPrediction:
-    key = f"loaded:{hash(data)}:{len(data)}"
+    key = f"loaded:{hashlib.sha256(data).hexdigest()}:{len(data)}"
     if st.session_state.get("loaded_key") != key:
         loaded = load_prediction(data)
         st.session_state.loaded_prediction = loaded; st.session_state.loaded_key = key
@@ -393,9 +394,12 @@ def main() -> None:
     st.set_page_config(page_title="KEIBA LAB Publisher Ver.3", page_icon="🐴", layout="wide")
     st.title("KEIBA LAB Publisher Ver.3")
     st.caption("保存済み予想を読み物へ変換し、手動公開と結果検証を支援します。X API・再予想は使用しません。")
-    uploaded = st.file_uploader("① .keiba読み込み", type=["keiba"])
+    uploaded = st.file_uploader("① .keibaファイルを選択", key="keiba-upload")
     if uploaded is None: st.info("Keiba AI Dashboardで保存した .keiba を選択してください。"); return
-    try: loaded = _get_loaded(uploaded.getvalue())
+    try:
+        upload = read_uploaded_keiba(uploaded)
+        loaded = _get_loaded(upload.data)
+    except KeibaUploadError as exc: st.error(str(exc)); return
     except Exception as exc: st.error(f".keibaを開けません: {exc}"); return
     snapshot = loaded.snapshot; state: dict[str, Any] = st.session_state.publisher_state
     state_file = st.file_uploader("Ver.1～3 Publisher stateを開く（任意）", type=["json"], key="state-upload")
@@ -404,7 +408,7 @@ def main() -> None:
             state = load_state(state_file.getvalue(), source_info=loaded.source_info); st.session_state.publisher_state = state; st.session_state["state-file"] = state_file.name
             st.success("既存stateをVer.3として復元しました。")
         except Exception as exc: st.error(f"stateを開けません: {exc}")
-    st.success(f"② {_event_date(snapshot)}｜{_mode_label(snapshot)}｜{len(snapshot.get('races') or [])}レース。Prediction Snapshotは読み取り専用です。")
+    st.success(f"✓ {_event_date(snapshot)} {_mode_label(snapshot)} / {len(snapshot.get('races') or [])}レースを読み込みました。Prediction Snapshotは読み取り専用です。")
     state["operation_mode"] = st.radio("③ 今日の運用モード", OPERATION_MODES, index=OPERATION_MODES.index(state.get("operation_mode", OPERATION_MODES[0])), horizontal=True)
     state["exclude_debut"] = st.toggle("新馬戦を除外", value=bool(state.get("exclude_debut", True)))
     st.checkbox("SSを公開表示", value=False, disabled=True, help="将来の公開解禁用設定です。現在は内部SSも注目度Sとして公開します。")
